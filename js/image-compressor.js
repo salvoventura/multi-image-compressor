@@ -1,11 +1,11 @@
 /*!
- * Image Compressor v1.0.0
+ * Image Compressor v1.1.3
  * https://github.com/xkeshi/image-compressor
  *
  * Copyright (c) 2017-2018 Xkeshi
  * Released under the MIT license
  *
- * Date: 2018-01-15T09:12:33.649Z
+ * Date: 2018-03-23T01:35:12.857Z
  */
 
 (function (global, factory) {
@@ -223,7 +223,27 @@ var DEFAULTS = {
   convertSize: 5000000,
 
   /**
-   * The success callback for the image compressing process.
+   * The hook function to execute before draw the image into the canvas for compression.
+   * @type {Function}
+   * @param {CanvasRenderingContext2D} context - The 2d rendering context of the canvas.
+   * @param {HTMLCanvasElement} canvas - The canvas for compression.
+   * @example
+   * function (context, canvas) { context.fillStyle = '#fff' }
+   */
+  beforeDraw: null,
+
+  /**
+   * The hook function to execute after drew the image into the canvas for compression.
+   * @type {Function}
+   * @param {CanvasRenderingContext2D} context - The 2d rendering context of the canvas.
+   * @param {HTMLCanvasElement} canvas - The canvas for compression.
+   * @example
+   * function (context, canvas) { context.filter = grayscale(100%) }
+   */
+  drew: null,
+
+  /**
+   * The hook function to execute when success to compress the image.
    * @type {Function}
    * @param {File} file - The compressed image File object.
    * @example
@@ -232,7 +252,7 @@ var DEFAULTS = {
   success: null,
 
   /**
-   * The error callback for the image compressing process.
+   * The hook function to execute when fail to compress the image.
    * @type {Function}
    * @param {Error} err - An Error object.
    * @example
@@ -453,6 +473,21 @@ function parseOrientation(orientation) {
   };
 }
 
+var REGEXP_DECIMALS = /\.\d*(?:0|9){12}\d*$/i;
+
+/**
+ * Normalize decimal number.
+ * Check out {@link http://0.30000000000000004.com/}
+ * @param {number} value - The value to normalize.
+ * @param {number} [times=100000000000] - The times for normalizing.
+ * @returns {number} Returns the normalized number.
+ */
+function normalizeDecimalNumber(value) {
+  var times = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 100000000000;
+
+  return REGEXP_DECIMALS.test(value) ? Math.round(value * times) / times : value;
+}
+
 var classCallCheck = function (instance, Constructor) {
   if (!(instance instanceof Constructor)) {
     throw new TypeError("Cannot call a class as a function");
@@ -565,7 +600,9 @@ var ImageCompressor = function () {
         }
 
         if (URL && !options.checkOrientation) {
-          resolve(URL.createObjectURL(file));
+          resolve({
+            url: URL.createObjectURL(file)
+          });
         } else if (FileReader) {
           var reader = new FileReader();
           var checkOrientation = options.checkOrientation && mimeType === 'image/jpeg';
@@ -676,27 +713,40 @@ var ImageCompressor = function () {
             height = _width$height.height;
           }
 
-          canvas.width = width;
-          canvas.height = height;
-
-          // Override the default fill color (#000, black)
-          context.fillStyle = 'transparent';
-          context.fillRect(0, 0, width, height);
-          context.save();
-          context.translate(width / 2, height / 2);
-          context.rotate(rotate * Math.PI / 180);
-          context.scale(scaleX, scaleY);
-          context.drawImage(image, Math.floor(destX), Math.floor(destY), Math.floor(destWidth), Math.floor(destHeight));
-          context.restore();
+          canvas.width = normalizeDecimalNumber(width);
+          canvas.height = normalizeDecimalNumber(height);
 
           if (!isImageType(options.mimeType)) {
             options.mimeType = file.type;
           }
 
+          var defaultFillStyle = 'transparent';
+
           // Converts PNG files over the `convertSize` to JPEGs.
           if (file.size > options.convertSize && options.mimeType === 'image/png') {
+            defaultFillStyle = '#fff';
             options.mimeType = 'image/jpeg';
           }
+
+          // Override the default fill color (#000, black)
+          context.fillStyle = defaultFillStyle;
+          context.fillRect(0, 0, width, height);
+          context.save();
+          context.translate(width / 2, height / 2);
+          context.rotate(rotate * Math.PI / 180);
+          context.scale(scaleX, scaleY);
+
+          if (options.beforeDraw) {
+            options.beforeDraw.call(_this, context, canvas);
+          }
+
+          context.drawImage(image, Math.floor(normalizeDecimalNumber(destX)), Math.floor(normalizeDecimalNumber(destY)), Math.floor(normalizeDecimalNumber(destWidth)), Math.floor(normalizeDecimalNumber(destHeight)));
+
+          if (options.drew) {
+            options.drew.call(_this, context, canvas);
+          }
+
+          context.restore();
 
           var done = function done(result) {
             resolve({
@@ -717,13 +767,13 @@ var ImageCompressor = function () {
             naturalHeight = _ref3.naturalHeight,
             result = _ref3.result;
 
-        if (URL) {
+        if (URL && !options.checkOrientation) {
           URL.revokeObjectURL(image.src);
         }
 
         if (result) {
           // Returns original file if the result is greater than it and without size related options
-          if (result.size > file.size && !(options.width > naturalWidth || options.height > naturalHeight || options.minWidth > naturalWidth || options.minHeight > naturalHeight)) {
+          if (result.size > file.size && options.mimeType === file.type && !(options.width > naturalWidth || options.height > naturalHeight || options.minWidth > naturalWidth || options.minHeight > naturalHeight)) {
             result = file;
           } else {
             var date = new Date();
@@ -745,7 +795,7 @@ var ImageCompressor = function () {
         _this.result = result;
 
         if (options.success) {
-          options.success(result);
+          options.success.call(_this, result);
         }
 
         return Promise.resolve(result);
@@ -754,7 +804,7 @@ var ImageCompressor = function () {
           throw err;
         }
 
-        options.error(err);
+        options.error.call(_this, err);
       });
     }
   }]);
